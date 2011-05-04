@@ -1,0 +1,17 @@
+K 25
+svn:wc:ra_dav:version-url
+V 27
+/svn/!svn/ver/63/trunk/conf
+END
+apache_virtualhost.conf
+K 25
+svn:wc:ra_dav:version-url
+V 51
+/svn/!svn/ver/63/trunk/conf/apache_virtualhost.conf
+END
+config.ini.EXAMPLE
+K 25
+svn:wc:ra_dav:version-url
+V 46
+/svn/!svn/ver/52/trunk/conf/config.ini.EXAMPLE
+END

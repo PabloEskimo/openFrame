@@ -1,0 +1,12 @@
+<?php
+
+include('../lib/common.php');
+
+$objDB = new AmazonSDB( Config::get('simpledb:key'), Config::get('simpledb:secret') );
+$chrDomain = 'TestDomain';
+
+$objResult = $objDB->list_domains();
+
+echo "<pre>";
+print_r($objResult);
+echo "</pre>";

@@ -1,0 +1,21 @@
+<?php
+/**
+ * This class provides an interface to Contacts to the application
+ *
+ * @package Contact
+ * @author Paul Maddox <paul.maddox@gmail.com>
+ * @copyright Paul Maddox 4 Jan 2010
+ */
+class Contact extends Base {
+	
+	protected $chrName;
+	protected $arrPhoneNumbers;
+	
+	protected $chrEmail;
+	protected $chrDescription;
+	
+	function getHash(  ) {
+		return md5(encode($this));
+	} # end method
+	
+}

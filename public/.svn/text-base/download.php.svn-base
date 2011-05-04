@@ -1,0 +1,26 @@
+<?php
+
+include('../lib/common.php');
+
+switch($_REQUEST['action']){
+
+	default:
+
+		$objSearchResult = new SearchResult($_REQUEST['id']);
+
+		if(!$objSearchResult->isLoaded()){
+			$objError = new Error("Attempted to download a non-existant file", Error::FATAL);
+			exit;
+		}
+
+		$chrFilename = urldecode(basename($objSearchResult->getURL()));
+
+
+
+
+		$chrCommand = "screen -d -m -s \"$chrFilename\" wget -c --user='" . Config::get('easynews:username'). "' --password='" . Config::get('easynews:password') . "' --no-check-certificate -O " . APP_HOME . "downloads/$chrFilename '{$objSearchResult->getURL()}'";
+		exec($chrCommand);
+
+		Page::location("/search/started/{$objSearchResult->getSearch()}");
+
+}

@@ -1,0 +1,31 @@
+<?php
+include('../lib/common.php');
+
+switch($_REQUEST['action']){
+
+	case 'show':
+
+		$objSearchResult = new SearchResult($_REQUEST['id']);
+
+		if(!$objSearchResult->isLoaded()){
+			exit;
+		}
+
+		 $arrContext = stream_context_create(array(
+			'http' => array(
+				'header'  => "Authorization: Basic " . base64_encode(Config::get('easynews:username') . ':' . Config::get('easynews:password')),
+			)
+         ));
+
+		$chrThumbPage = file_get_contents($objSearchResult->getThumbnail(), false, $arrContext);
+		
+		$chrPattern = '#<img src=([^>]+)#i';
+		preg_match($chrPattern, $chrThumbPage, $arrMatches);
+
+
+		readfile($arrMatches[1], false, $arrContext);
+
+}
+
+
+

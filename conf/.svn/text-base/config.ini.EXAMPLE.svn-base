@@ -1,0 +1,43 @@
+[general]
+name = "chown.me"
+heading = "Easynews Downloader" 
+theme = green
+footer = "&copy; maddox 2010"
+
+[easynews]
+hostname = "members.easynews.com"
+username = my-easynews-username
+password = my-easynews-password
+ssl = yes
+
+[mediainfo]
+bin = "/usr/bin/mediainfo"
+
+[database]
+; Setup the database connection here
+; for DSN help see http://php.net/pdo
+dsn = "mysql:host=127.0.0.1;dbname=easynews"
+username = "root"
+password = ""
+
+[authentication]
+; Define the method of authentication
+; that will be used for user sessions
+; Valid: ldap | database
+required = yes
+method = database
+cookie = SecureSite
+
+; The following pages will always be 
+; exempt from authentication
+exempt[] = "/thumb.php"
+exempt[] = "/login.php"
+exempt[] = "/install.php"
+exempt[] = "/search.php"
+exempt[] = "/index.php"
+
+[email]
+; Outgoing email settings
+smtp = 
+username = 
+password = 

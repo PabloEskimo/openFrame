@@ -1,0 +1,111 @@
+<?php
+/**
+ * This class provides connectivity to a Poptext SMS system
+ *
+ * @package Poptext
+ * @author Paul Maddox <paul.maddox@gmail.com>
+ * @copyright Paul Maddox 4 Jan 2010
+ */
+class Poptext extends Base {
+	
+	protected $chrURL;
+	protected $chrQueue;
+	protected $arrNumbers;
+	
+	/*##########################################################################*//**
+	 * Gets the current list of phone numbers for this SMS list
+	 * @param 
+	 * @return $arrNumbers;
+	 */
+	function getList(  ) {
+			
+		$objHTTP = new HTTP();
+		$objHTTP->setURL("{$this->getURL()}/?type={$this->getQueue()}");
+		$objHTTP->run();
+		
+		if($objHTTP->getResultCode() != 200){
+			die("Failed to load poptext contact list for queue: {$this->getQueue()}");
+		}
+			
+		$chrPattern = "/([\\d]+)/m";
+		preg_match_all($chrPattern, $objHTTP->getResult(), $arrResults);
+		
+		return $arrResults[1];
+	
+	} # end method
+	
+	/*##########################################################################*//**
+	 * Removes a number from poptext queue
+	 * @param $chrPhoneNumber
+	 * @return true;
+	 */
+	function removePhoneNumber( $chrPhoneNumber ) {
+		
+		$objHTTP = new HTTP();
+		$objHTTP->setURL("{$this->getURL()}/?type={$this->getQueue()}&del=$chrPhoneNumber");
+		$objHTTP->run();
+		
+		if($objHTTP->getResultCode() != 200){
+			die("Failed to remove $chrPhoneNumber from queue: {$this->getQueue()}");
+		}
+		
+	} # end method
+	
+	/*##########################################################################*//**
+	 * Adds a phone number to a poptext queue
+	 * @param $chrPhoneNumber
+	 * @return true;
+	 */
+	function addPhoneNumber( $chrPhoneNumber ) {
+			
+		$objHTTP = new HTTP();
+		$objHTTP->setURL("{$this->getURL()}/?type={$this->getQueue()}&add=$chrPhoneNumber");
+		$objHTTP->run();
+		
+		if($objHTTP->getResultCode() != 200){
+			die("Failed to add $chrPhoneNumber to queue: {$this->getQueue()}");
+		}
+		
+		return true;
+	
+	} # end method
+	
+	/*##########################################################################*//**
+	 * Removes ALL phone numbers from a poptext queue
+	 * @param 
+	 * @return true;
+	 */
+	function removeAll(  ) {
+				
+		foreach($this->getList() as $chrPhoneNumber){
+			$this->removePhoneNumber($chrPhoneNumber);
+		}
+		
+		return true;
+	
+	} # end method
+	
+	/*##########################################################################*//**
+	 * sendMessage
+	 * @param $chrMessage, $chrPhoneNumber
+	 * @return true;
+	 */
+	function sendMessage($chrMessage) {
+			
+		$objHTTP = new HTTP();
+		$objHTTP->setURL("{$this->getURL()}/?type={$this->getQueue()}&msg=" . urlencode($chrMessage));
+		$objHTTP->run();
+		
+		if($objHTTP->getResultCode() != 200){
+			die("Failed to send message to queue: {$this->getQueue()}");
+		}
+		
+		return true;
+	
+	} # end method
+	
+}
+
+
+
+

@@ -1,0 +1,748 @@
+<?php
+/**
+ * This class provides allows manipulation of BIND's DNS zone files
+ *
+ * @package DNS
+ * @author Paul Maddox <paul.maddox@gmail.com>
+ * @copyright Paul Maddox 4 Jan 2010
+ */
+class DNS {
+	
+	/** @var string */
+	protected $chrServer;
+	protected $chrHostname;
+	protected $chrClass;
+	protected $chrType;
+	protected $chrZone;
+	protected $chrValue;
+	
+	/** @var int */
+	protected $intSerial;
+	protected $intTTL;
+	
+	/** @var bool */
+	protected $blnLoaded;
+	
+	/*##########################################################################*//**
+	 * Class constructor
+	 * @param $chrHostname = false
+	 * @return true
+	 */
+	function __construct($chrHostname = false){
+	
+		$this->blnLoaded = false;
+		$this->setServer('web1.london.shadow-planner.com');
+		$this->setHostname($chrHostname);
+		$this->setClass('IN');
+		$this->setType('A');
+		$this->setSerial('');
+		$this->setTTL(300);
+		$this->setZone('shadow-planner.com');
+	
+		if($chrHostname !== false){
+			$this->load($chrHostname);
+		} # end if
+		
+		return true;
+	
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Checks if a DNS record loaded successfully
+	 * @param 
+	 * @return $this->blnLoaded
+	 */
+	function isLoaded(){
+	
+		return $this->blnLoaded;
+		
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Deletes a DNS entry
+	 * @param 
+	 * @return true
+	 */
+	function delete(){
+	
+		# Check that all the data is valid
+		# Bad data may cause the DNS server to fail!
+		Progress::update("Verifying original configuration");
+		$this->validate();
+		
+		# Backups backups backups! You can never have enough backups!
+		Progress::update("Taking backup of original configuration");
+		$this->backup();
+		
+		
+		$chrName = str_replace(".{$this->getZone()}", '', $this->getHostname());
+		
+		$chrCommand = "sed -i 's/^$chrName.*\b//' /etc/bind/zones/pri.{$this->getZone()}";
+		
+		$objSSH = new SSH();
+		$objSSH->setHostname($this->getServer());
+		$objSSH->setSuperuser(true);
+		$objSSH->setCommand($chrCommand);
+		
+		if(!$objSSH->run()){
+			$objError = new Error("Failed to delete DNS record", Error::WARNING);
+		} # end if
+		
+		# Check if the update has caused a syntax error
+		Progress::update("Checking new DNS zone file syntax");
+		if(!$this->checkSyntax()){
+			
+			# Oh fuck.
+			#$this->restoreBackup();
+			$objError = new Error("DNS delete cause zone file syntax error", Error::FATAL );
+			return false;
+			
+		} #  end if
+	
+		return true;
+		
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Adds a DNS entry
+	 * @param 
+	 * @return true
+	 */
+	function add(){
+	
+		# If it already exists, update it rather than adding it
+		# as this may cause an unintended round-robin
+		
+		if($this->exists()){
+			return $this->update();
+		} # end if	
+		
+		# Check that all the data is valid
+		# Bad data may cause the DNS server to fail!
+		Progress::update("Verifying original configuration");
+		$this->validate();
+		
+		# Backups backups backups! You can never have enough backups!
+		Progress::update("Taking backup of original configuration");
+		$this->backup();
+
+		$chrName = str_replace(".{$this->getZone()}", '', $this->getHostname());
+		$chrDNSEntry = "$chrName\\\\\\\t\\\\\\\t{$this->getTTL()}\\\\\\\t{$this->getClass()}\\\\\\\t{$this->getType()}\\\\\\\t{$this->getValue()}";
+		
+		$chrCommand = "sh -c \"echo \\\"$chrDNSEntry\\\" >> /etc/bind/zones/pri.{$this->getZone()}\"";
+		
+		$objSSH = new SSH();
+		$objSSH->setHostname($this->getServer());
+		$objSSH->setSuperuser(true);
+		$objSSH->setCommand($chrCommand);
+		#$objSSH->setReturnMethod(SSH::RETURN_PASSTHRU );
+		
+		Progress::update("Updating DNS zone file");
+		if(!$objSSH->run()){
+			$objError = new Error("Failed to update DNS zone file: pri." . $this->getZone(), Error::FATAL, $objSSH->getOutput());
+			return false;
+		} # end if
+		
+		# Check if the update has caused a syntax error
+		Progress::update("Checking new DNS zone file syntax");
+		if(!$this->checkSyntax()){
+			
+			# Oh fuck.
+			#$this->restoreBackup();
+			$objError = new Error("DNS updated cause zone file syntax error", Error::FATAL );
+			return false;
+			
+		} #  end if
+		
+		Progress::update("Updating DNS zone file serial number");
+		$this->updateSerial();
+		
+		Progress::update("Restarting DNS server");
+		$this->restart();
+		
+		return true;
+	
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Updates a DNS record
+	 * @param 
+	 * @return true
+	 */
+	function update(){
+	
+		# Check that all the data is valid
+		# Bad data may cause the DNS server to fail!
+		$this->validate();
+		
+		# Backups backups backups! You can never have enough backups!
+		$this->backup();
+		
+		$chrName = str_replace(".{$this->getZone()}", '', $this->getHostname());
+		$chrDNSEntry = "$chrName		{$this->getTTL()}	{$this->getClass()}	{$this->getType()}	{$this->getValue()}";
+		
+		return true;
+	
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Restarts the DNS service
+	 * @param 
+	 * @return true
+	 */
+	function restart(){
+	
+		$chrCommand = "/etc/init.d/bind9 reload";
+		
+		$objSSH = new SSH();
+		$objSSH->setHostname($this->getServer());
+		$objSSH->setSuperuser(true);
+		$objSSH->setCommand($chrCommand);
+		
+		if($objSSH->run()){
+			return true;
+		} else {
+			$objError = new Error("Failed to restart DNS service", Error::FATAL);
+		} # end if
+		
+	} # end function
+	
+	
+	/*##########################################################################*//**
+	 * Updates the DNS serial number
+	 * @param 
+	 * @return true
+	 */
+	function updateSerial(){
+	
+		# Backups backups backups! You can never have enough backups!
+		$this->backup();
+		
+		$intOldSerial = $this->getSerial();
+		
+		if(strlen($intOldSerial) != 10){
+			# Something's wrong dave, something's very wrong.
+			$objError = new Error("Invalid DNS zone serial: $intOldSerial", Error::FATAL );
+			return false;
+		} # end if
+		
+		$intOldDate = substr($intOldSerial, 0, 8);
+		$intOldRevision = substr($intOldSerial, 8, 2);
+		
+		$intDate = date("Ymd");
+		
+		if($intDate == $intOldDate){
+			# An update has already taken place today
+			# so just update the revision number
+			
+			$intRevision = $intOldRevision + 1;
+			
+			if(strlen($intRevision) < 2){
+				$intRevision = "0$intRevision";
+			} # end if
+				
+		} else {
+			$intRevision = "01";
+		} # end if
+		
+		$chrCommand = "sed -i 's/.*;.*serial/\t{$intDate}{$intRevision};\tserial/g' /etc/bind/zones/pri.{$this->getZone()}";	
+		
+		$objSSH = new SSH();
+		$objSSH->setHostname($this->getServer());
+		$objSSH->setSuperuser(true);
+		$objSSH->setCommand($chrCommand);
+
+		if($objSSH->run()){
+			
+			# Ok so we've updated the serial but we should really check that the syntax is still valid!
+			
+			if($this->checkSyntax()){
+				return true;
+			} else {
+				
+				# Oh fuck.
+				$this->restoreBackup();
+				$objError = new Error("DNS serial update cause zone file syntax error", Error::FATAL );
+				return false;
+				
+			} # end if
+			
+		} else {
+			
+			$objError = new Error("Failed to update serial for zone: {$this->getZone()}", Error::FATAL , $objSSH->getOutput() );
+			return false;
+			
+		} # end if
+		
+		return true;
+	
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Checks the syntax of all BIND configuration files
+	 * @param 
+	 * @return $blnValid
+	 */
+	function checkSyntax(){
+	
+		$chrCommand = 'named-checkconf -z';
+		
+		$objSSH = new SSH();
+		$objSSH->setHostname($this->getServer());
+		$objSSH->setCommand($chrCommand);
+		
+		if($objSSH->run()){
+			return true;
+		} else {
+			return false;
+		} # end if
+		
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Checks the all the data is valid
+	 * @param 
+	 * @return $blnValid
+	 */
+	function validate(){
+	
+		if(! strlen($this->getServer()) > 0 ){
+			$objError = new Error("Invalid DNS Server: {$this->getServer()}", Error::FATAL );
+			return false;
+		} # end if
+		
+		if(! strlen($this->getHostname()) > 0 ){
+			$objError = new Error("Invalid DNS Hostname: {$this->getHostname()}", Error::FATAL );
+			return false;
+		} # end if
+		
+		switch($this->getType()){
+			
+			case 'A': # Address, code 1. Used for storing an IP address (specifically, an IPv4 32-bit address) associated with a domain name. Defined in RFC 1035.
+			case 'A6': # IPv6 address, code 38. Relegated to Experimental status by RFC 3363, as AAAA records are now regarded as more generally useful. Defined in RFC 2874.
+			case 'AAAA': # IPv6 address, code 28. Used for storing an IPv6 128-bit address associated with a domain name. Defined in RFC 3596.
+			case 'AFSDB': # AFS Data Base location, code 18. Not widely used, rather use SRV records instead. Defined in RFC 1183.
+			case 'CNAME': # Canonical name for a DNS alias, code 5. Note that if a domain name has a CNAME record associated with it, then it can not have any other record types. In addition, CNAME records should not point to domain names which themselves have associated CNAME records, so CNAME only provides one layer of indirection. Defined in RFC 1035.
+			case 'DNAME': # DNAME, code 39. A way to provide aliases for a whole domain, not just a single domain name as with CNAME. Defined in RFC 2672.
+			case 'DS': # Delegation signer, code 43. A major change to the way DNSSEC operates. Defined in RFC 3658.
+			case 'GPOS': # Geographical position, code 27, obsolete. Defined in RFC 1712.
+			case 'HINFO': # Host Information, code 13. Not widely used. Defined in RFC 1035.
+			case 'ISDN': # ISDN address, code 20. Not widely used. Defined in RFC 1183.
+			case 'KEY': # Public key as used in DNSSEC, code 25. Defined in RFC 2535. See also RFC 3445.
+			case 'KX': # Key Exchanger, code 36. Defined in RFC 2230.
+			case 'LOC': # Location information, code 29. Associates a geographical location with a domain name. Defined in RFC 1876.
+			case 'MB': # Mailbox, code 7. Not widely used. Defined in RFC 1035.
+			case 'MD': # Mail destination, code 3, obsolete. Defined in RFC 1035.
+			case 'MF': # Mail forwarder, code 4, obsolete. Defined in RFC 1035.
+			case 'MG': # Mail group member, code 8. Not widely used. Defined in RFC 1035.
+			case 'MINFO': # Mailbox or mailing list information, code 14. Defined in RFC 1035.
+			case 'MR': # Mail rename domain name, code 9. Not widely used. Defined in RFC 1035.
+			case 'MX': # Mail Exchanger, code 15. Each MX record specifies a domain name (which must have an A record associated with it) and a priority; a list of mail exchangers is then ordered by priority when delivering mail. MX records provide one level of indirection in mapping the domain part of an email address to a list of host names which are meant to receive mail for that domain name. Critical part of the infrastructure used to support SMTP email. Defined in RFC 1035.
+			case 'NAPTR': # Naming authority pointer, code 35. Used mostly for Internet telephony infrastructure as in RFC 3263. Defined in RFC 3403.
+			case 'NULL': # Null record, code 10. Not widely used. Defined in RFC 1035.
+			case 'NS': # Authoritative name server, code 2. Specifies a host name (which must have an A record associated with it), where DNS information can be found about the domain name to which the NS record is attached. NS records are the basic infrastructure on which DNS is built; they stitch together distributed zone files into a directed graph that can be efficiently searched. Defined in RFC 1035.
+			case 'NSAP': # Network service access point address, code 22. Allows OSI-style NSAPs to be stored in the DNS. Defined in RFC 1706.
+			case 'NSAP-PTR': # NSAP pointer, code 23, obsolete. Defined in RFC 1348.
+			case 'NXT': # Next domain, code 30, obsolete. Defined in RFC 2065.
+			case 'PTR': # Domain name pointer, code 12. Provides a general indirection facility for DNS records. Most often used to provide a way to associate a domain name with an IPv4 address in the IN-ADDR.ARPA domain. Defined in RFC 1035.
+			case 'PX': # Pointer to X.400/RFC822 mail mapping information. Defined in RFC 2163.
+			case 'RP': # Responsible person, code 17. Defined in RFC 1183.
+			case 'RT': # Route through, code 21. Not widely used. Defined in RFC 1183.
+			case 'SIG': # Cryptographic public key signature, code 24. Defined in RFC 2931.
+			case 'SOA': # Start of authority, code 6. Marks the start of a zone. Defined in RFC 1035.
+			case 'SRV': # Server selection, code 33. Similar to MX records, generalised to any network service. Defined in RFC 2782.
+			case 'TKEY': # Transaction key, code 249. A way of distributing keys for TSIG records. Defined in RFC 2930.
+			case 'TSIG': # Transaction signature, code 250. Simple authentication for DNS transactions, using shared secret keys and hashing. Defined in RFC 2845.
+			case 'TXT': # Text string, code 16. Arbitrary binary data, up to 255 bytes in length. Defined in RFC 1035.
+			case 'WKS': # Well-known service, code 11. Information about which services are available at a host. Defined in RFC 1035.
+			case 'X25': # X25 PSDN address, code 19. Not widely used. Defined in RFC 1183.
+				# Do nothing as they're all valid	
+			break;
+			
+			default:
+				# Anything that isn't in the list above, is crapola.
+				# Ignore it and bitch and whine like a little girl!
+				
+				$objError = new Error("Invalid DNS record type: {$this->getType()}", Error::FATAL );
+				return false;
+				
+			break;
+			
+		} # end switch
+		
+		/*
+		if(is_numeric($this->getSerial())){
+			
+			# The format of a valid serial number is:
+			# YYMMDDXX, where XX is a 2 digit number which
+			# increments every time an update is made
+			
+			if(strlen($this->getSerial()) != 8){
+				$objError = new Error("Invalid DNS zone serial: {$this->getSerial()}", Error::FATAL );
+				return false;
+			} # end if
+		
+		} else {
+			$objError = new Error("Invalid DNS zone serial: {$this->getSerial()}", Error::FATAL );
+			return false;
+		} # end if
+		*/
+		
+		if(is_numeric($this->getTTL())){
+			
+			if((!$this->getTTL() > 0) || $this->getTTL() > 86400){
+				$objError = new Error("Invalid DNS Time-to-Live: {$this->getTTL()}", Error::FATAL );
+				return false;
+			} # end if
+			
+		} else {
+			$objError = new Error("Invalid DNS Time-to-Live: {$this->getTTL()}", Error::FATAL );
+			return false;
+		} # end if
+		
+	
+		return true;
+	
+	} # end function
+	
+	
+	
+	/*##########################################################################*//**
+	 * Check if a DNS record already exists
+	 * @param 
+	 * @return $blnExists
+	 */
+	function exists(){
+
+		# Bugger, doing it simply like this won't work as we use *.shadow-planer.com
+		#return dns_check_record($this->getHostname(), 'A');
+		
+		# Have to resort to the long way!
+		
+		# Notation in DNS file might be full hostname or abbreviated
+		$chrAbbreviated = str_replace('.shadow-planner.com', '', $this->getHostname());
+		
+		# ^  = Must be at beginning of line
+		# \b = Whitespace
+		$chrCommand = "egrep -i \"(^{$this->getHostname()}|^$chrAbbreviated\b)\" /etc/bind/zones/pri.{$this->getZone()}";
+	
+		$objSSH = new SSH();
+		$objSSH->setHostname($this->getServer());
+		$objSSH->setCommand($chrCommand);
+		
+		return $objSSH->run();
+		
+	} # end function
+	
+	
+	/*##########################################################################*//**
+	 * Backs up the existing DNS configuration (always a good thing!)
+	 * @param 
+	 * @return true
+	 */
+	function backup(){
+		
+		$chrFilename = "/etc/bind/zones/pri.{$this->getZone()}";
+		$intTimestamp = date('Ymd');
+		$chrBackup = "$chrFilename.$intTimestamp";
+		$chrCommand = "cp -f $chrFilename $chrBackup";
+		
+		$objSSH = new SSH();
+		$objSSH->setSuperuser(true);
+		$objSSH->setHostname($this->getServer());
+		$objSSH->setCommand($chrCommand);
+		
+		if(!$objSSH->run()){
+			$objError = new Error('Failed to backup DNS configuration so refusing to make any changes!', Error::FATAL );
+			return false;
+		} # end if
+		
+		return true;
+	
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Restores the DNS zone file from a previous backup
+	 * @param 
+	 * @return true
+	 */
+	function restoreBackup(){
+	
+		$chrFilename = "/etc/bind/zones/pri.{$this->getZone()}";
+		$intTimestamp = date('Ymd');
+		$chrBackup = "$chrFilename.$intTimestamp";
+		$chrCommand = "cp -f $chrBackup $chrFilename";
+		
+		$objSSH = new SSH();
+		$objSSH->setSuperuser(true);
+		$objSSH->setHostname($this->getServer());
+		$objSSH->setCommand($chrCommand);
+		
+		if(!$objSSH->run()){
+			$objError = new Error('Failed to backup DNS configuration so refusing to make any changes!', Error::FATAL );
+			return false;
+		} # end if
+		
+		return true;
+		
+	} # end function
+	
+	
+	
+	
+	/*##########################################################################*//**
+	 * Loads a DNS entry based on the hostname
+	 * @param $chrHostname
+	 * @return true
+	 */
+	function load($chrHostname){
+		
+		# Notation in DNS file might be full hostname or abbreviated
+		$chrAbbreviated = str_replace('.shadow-planner.com', '', $chrHostname);
+		
+		# ^  = Must be at beginning of line
+		# \b = Whitespace
+		
+		$chrCommand = "egrep -i \"(serial|^$chrHostname\b|^$chrAbbreviated\b)\" /etc/bind/zones/pri.{$this->getZone()}";
+		
+		$objSSH = new SSH();
+		$objSSH->setHostname($this->getServer());
+		$objSSH->setCommand($chrCommand);
+		#$objSSH->setReturnMethod( SSH::RETURN_PASSTHRU ); # Debug
+		
+		if(!$objSSH->run()){
+			$objError = new Error("Failed to retrieve DNS for hostname $chrHostname", Error::FATAL );
+			return false;
+		} # end if
+		
+		# Now cut up the output in the serial and respective record
+		foreach($objSSH->getOutput() as $chrOutput){
+			
+			# Remove all the unnecessary whitespace crud
+			$chrOutput = str_replace("\t", ' ', $chrOutput);
+			$chrOutput = str_replace('  ', ' ', $chrOutput);
+			$chrOutput = str_replace('  ', ' ', $chrOutput);
+			$chrOutput = trim($chrOutput);
+			
+			if(stristr($chrOutput, 'serial') === false){
+				# This isn't the serial so it must be a DNS value!
+				
+				$arrRecord = explode(' ', $chrOutput);
+				$this->setHostname($arrRecord[0]);
+				$this->setTTL($arrRecord[1]);
+				$this->setClass($arrRecord[2]);
+				$this->setType($arrRecord[3]);
+				$this->setValue($arrRecord[4]);
+				$this->blnLoaded = true;
+				
+			} else {
+				# This must be the serial
+				
+				$arrSerial = explode(';', $chrOutput);
+				if(is_numeric($arrSerial[0])){
+					 $this->setSerial($arrSerial[0]);
+				} # end if
+				
+			} # end if
+			
+		} # end foreach
+		
+		return $this->blnLoaded;
+	
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Gets the hostname for the DNS entry
+	 * @return chrHostname
+	 */
+	function getHostname(){
+		return $this->chrHostname;
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Sets the hostname for the DNS entry
+	 * @param chrHostname
+	 * @return $blnSuccess
+	 */
+	function setHostname($chrHostname){
+		$this->chrHostname = $chrHostname;
+		return true;
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Gets the class type for the DNS record
+	 * @return chrClass
+	 */
+	function getClass(){
+		return $this->chrClass;
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Sets the class type for the DNS record
+	 * @param chrClass
+	 * @return $blnSuccess
+	 */
+	function setClass($chrClass){
+		$this->chrClass = $chrClass;
+		return true;
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Gets the record type for the dns entry
+	 * @return chrType
+	 */
+	function getType(){
+		return $this->chrType;
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Sets the record type for the dns entry
+	 * @param chrType
+	 * @return $blnSuccess
+	 */
+	function setType($chrType){
+		$this->chrType = $chrType;
+		return true;
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Gets the serial number for the DNS modification
+	 * @return intSerial
+	 */
+	function getSerial(){
+		
+		if(is_numeric($this->intSerial)){
+			return $this->intSerial;
+		} else {
+		
+			# The serial is unknown so we better get it quick before anyone notices!
+			
+			$chrCommand = "grep \"serial\" /etc/bind/zones/pri.{$this->getZone()}";
+		
+			$objSSH = new SSH();
+			$objSSH->setHostname($this->getServer());
+			$objSSH->setCommand($chrCommand);
+			#$objSSH->setReturnMethod( SSH::RETURN_PASSTHRU ); # Debug
+			if(!$objSSH->run()){
+				$objError = new Error("Failed to retrieve serial for zone: " . $this->getZone(), Error::FATAL );
+				return false;
+			} # end if
+			
+			# Now cut up the output in the serial 
+			foreach($objSSH->getOutput() as $chrOutput){
+				
+				# Remove all the unnecessary whitespace crud
+				$chrOutput = str_replace("\t", ' ', $chrOutput);
+				$chrOutput = str_replace('  ', ' ', $chrOutput);
+				$chrOutput = str_replace('  ', ' ', $chrOutput);
+				$chrOutput = trim($chrOutput);
+				
+				if(strstr($chrOutput, 'serial') !== false){
+					# This must be the serial
+					
+					$arrSerial = explode(';', $chrOutput);
+					$arrSerial[0] = trim($arrSerial[0]);
+					
+					if(is_numeric($arrSerial[0]) && strlen($arrSerial[0]) == 10){
+						 $this->setSerial($arrSerial[0]);
+						 return $this->intSerial;
+					} else {
+						$objError = new Error("Failed to retrieve serial for zone: " . $this->getZone(), Error::FATAL );
+						return false;
+					} # end if
+					
+				} # end if
+				
+			} # end foreach
+			
+		} # end if
+		
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Sets the serial number for the DNS modification
+	 * @param intSerial
+	 * @return $blnSuccess
+	 */
+	private function setSerial($intSerial){
+		$this->intSerial = $intSerial;
+		return true;
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Gets the TTL value for the DNS entry (in seconds)
+	 * @return intTTL
+	 */
+	function getTTL(){
+		return $this->intTTL;
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Sets the TTL value for the DNS entry (in seconds)
+	 * @param intTTL
+	 * @return $blnSuccess
+	 */
+	function setTTL($intTTL){
+		$this->intTTL = $intTTL;
+		return true;
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Gets the DNS zone to modify
+	 * @return chrZone
+	 */
+	function getZone(){
+		return $this->chrZone;
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Sets the DNS zone to modify
+	 * @param chrZone
+	 * @return $blnSuccess
+	 */
+	function setZone($chrZone){
+		$this->chrZone = $chrZone;
+		return true;
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Gets the DNS server
+	 * @return chrServer
+	 */
+	function getServer(){
+		return $this->chrServer;
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Sets the DNS server
+	 * @param chrServer
+	 * @return $blnSuccess
+	 */
+	function setServer($chrServer){
+		$this->chrServer = $chrServer;
+		return true;
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Gets the value for the DNS record
+	 * @return chrValue
+	 */
+	function getValue(){
+		return $this->chrValue;
+	} # end function
+	
+	/*##########################################################################*//**
+	 * Sets the value for the DNS record
+	 * @param chrValue
+	 * @return $blnSuccess
+	 */
+	function setValue($chrValue){
+		$this->chrValue = $chrValue;
+		return true;
+	} # end function
+	
+} # end class
+
+
+
+?>

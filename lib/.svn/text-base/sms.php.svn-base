@@ -1,0 +1,131 @@
+<?php
+/**
+ * This is a base class for SMS operations
+ *
+ * @package SMS
+ * @author Paul Maddox <paul.maddox@gmail.com>
+ * @copyright Paul Maddox 4 Jan 2010
+ */
+class SMS extends Base {
+	
+	protected $arrRecipients;
+	protected $chrMessage;
+	protected $blnSent;
+	protected $blnEnabled;
+	
+	protected $chrURL;
+	protected $chrUsername;
+	protected $chrPassword;
+	protected $chrAccount;
+	
+	/**
+	 * Class Constructor
+	 * @param 
+	 * @return true
+	 */
+	public function __construct() {
+				
+		$this->setURL(Config::get('sms:url'));
+		$this->setUsername(Config::get('sms:username'));
+		$this->setPassword(Config::get('sms:password'));
+		$this->setAccount(Config::get('sms:account'));
+		
+		$this->setSent(false);
+	
+		return true;
+			
+	} # end method
+	
+	/*##########################################################################*//**
+	 * send
+	 * @param 
+	 * @return $blnSent;
+	 */
+	function send(  ) {
+		
+		$arrFields = array(
+			'Username' => $this->getUsername(),
+			'Password' => $this->getPassword(),
+			'Account' => $this->getAccount(),
+			'Recipient' => implode(',', $this->getRecipients()),
+			'Body' => $this->getMessage(),
+			'Originator' => Config::get('sms:sender'),
+		);
+
+	
+		$arrContext = array(
+			'http' => array(
+				'method' => 'POST',
+				'header' => 'Content-type: application/x-www-form-urlencoded\r\n',
+				'content' => http_build_query($arrFields),
+				'timeout' => 5,
+			),
+		);
+		
+		$objContext = stream_context_create($arrContext);
+			
+		$chrResponse = @file_get_contents(Config::get('sms:url'), false, $objContext);
+		
+		if($chrResponse === false){
+			Error::warning("Failed to send SMS to: {$arrFields['Recipient']}");
+		} else {
+			Audit::message("SMS sent successfully to {$arrFields['Recipient']}");
+		}
+		
+		$this->setSent(true);
+		
+		return true;
+		
+	} # end method
+	
+	/**
+	 * Checks if SMS alerts are currently enabled
+	 * @param 
+	 * @return $blnEnabled
+	 */
+	public function isEnabled(  ) {
+				
+		$chrCommand = "ls -1 /var/www/mod_perl/httppost_sms.pl";
+		
+		$objSSH = new SSH();
+		$objSSH->setKey(APP_HOME . 'keys/nagios.key');
+		$objSSH->setHostname('uk1-sys-nagios1.maint.inspiredbroadcast.net');
+		$objSSH->setCommand($chrCommand);
+
+		if($objSSH->run()){
+			return true;
+		} else {
+			return false;
+		}
+					
+	} # end method
+	
+	
+	/**
+	 * Enabled or disabled SMS alerts
+	 * @param $blnEnabled
+	 * @return true
+	 */
+	public function setEnabled( $blnEnabled ) {
+				
+		if($blnEnabled){
+			$chrCommand = "mv /var/www/mod_perl/httppost_sms.pl.DISABLED /var/www/mod_perl/httppost_sms.pl";
+			Audit::message("SMS alerts disabled");
+		} else {	
+			$chrCommand = "mv /var/www/mod_perl/httppost_sms.pl /var/www/mod_perl/httppost_sms.pl.DISABLED";
+			Audit::message("SMS alerts enabled");
+		}
+	
+		$objSSH = new SSH();
+		$objSSH->setKey(APP_HOME . 'keys/nagios.key');
+		$objSSH->setHostname('uk1-sys-nagios1.maint.inspiredbroadcast.net');
+		$objSSH->setCommand($chrCommand);
+		
+		return $objSSH->run();
+
+		
+		
+	} # end method
+	
+
+}
