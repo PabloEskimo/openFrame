@@ -152,7 +152,7 @@ class Page extends Base {
 			echo "<script language=\"javascript\"> document.location.href = '$chrURL'; </script>\n";
 			flush();
 		} else {
-			header("Location: $chrURL", TRUE, 301);
+			header("Location: $chrURL", TRUE, 302);
 		}
 	
 		return true;
